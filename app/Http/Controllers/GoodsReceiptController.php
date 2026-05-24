@@ -5,6 +5,8 @@ use App\Models\GoodsReceipt;
 use App\Models\GoodsReceiptItem;
 use App\Models\StockMovement;
 use App\Models\Product;
+use App\Models\PriceHistory;
+use App\Support\Audit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -22,6 +24,9 @@ class GoodsReceiptController extends Controller
             'warehouse_id' => 'required|exists:warehouses,id',
             'supplier_name' => 'nullable|string|max:255',
             'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.unit_price' => 'required|numeric|min:0',
         ]);
 
         try {
@@ -44,8 +49,9 @@ class GoodsReceiptController extends Controller
                     'goods_receipt_id' => $receipt->id,
                     'product_id' => $row['product_id'],
                     'barcode' => $row['barcode'],
-                    'quantity' => $row['quantity'],
+                    'quantity' => (int)$row['quantity'],
                     'unit_price' => $row['unit_price'],
+                    'is_used' => !empty($row['is_used']),
                     'expiry_date' => $row['expiry_date'] ?? null,
                     'batch' => $row['batch'] ?? null,
                 ]);
@@ -57,14 +63,25 @@ class GoodsReceiptController extends Controller
                     'document_type' => 'goods_receipt',
                     'document_id' => $receipt->id,
                     'direction' => 'in',
-                    'quantity' => $row['quantity'],
+                    'quantity' => (int)$row['quantity'],
                     'unit_price' => $row['unit_price'],
+                    'is_used' => !empty($row['is_used']),
                     'expiry_date' => $row['expiry_date'] ?? null,
                     'batch' => $row['batch'] ?? null,
+                ]);
+
+                PriceHistory::create([
+                    'product_id' => $row['product_id'],
+                    'user_id' => auth()->id(),
+                    'price_type' => 'purchase',
+                    'new_price' => $row['unit_price'],
+                    'source_type' => GoodsReceipt::class,
+                    'source_id' => $receipt->id,
                 ]);
             }
 
             DB::commit();
+            Audit::log('goods_receipt_created', $receipt, 'Создана приемка ' . $receipt->document_number);
             return response()->json(['success' => true, 'receipt_id' => $receipt->id]);
         }
         catch (\Throwable $e) {
@@ -128,5 +145,3 @@ class GoodsReceiptController extends Controller
     }
 
 }
-
-

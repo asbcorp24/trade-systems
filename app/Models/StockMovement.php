@@ -15,8 +15,16 @@ class StockMovement extends Model
         'direction',
         'quantity',
         'unit_price',
+        'is_used',
         'expiry_date',
         'batch',
+    ];
+
+    protected $casts = [
+        'quantity' => 'integer',
+        'unit_price' => 'decimal:2',
+        'is_used' => 'boolean',
+        'expiry_date' => 'date',
     ];
 
     public function product()

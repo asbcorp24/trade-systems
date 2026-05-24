@@ -31,6 +31,12 @@
 
         <h4>Товары</h4>
 
+        <div class="input-group mb-3">
+            <input id="quickBarcode" class="form-control form-control-lg"
+                   placeholder="Сканируйте штрихкод товара">
+            <button class="btn btn-primary" type="button" onclick="scanIntoNewRow()">Сканировать камерой</button>
+        </div>
+
         <!-- Карточки позиций -->
         <div id="itemsCardWrapper"></div>
 
@@ -141,7 +147,7 @@
         function deleteCard(id) { $(`#card_${id}`).remove(); recalcTotal(); }
 
         // === Добавление карточки товара ===
-        function addRow() {
+        function addRow(productData = null) {
             rowId++;
 
             let html = `
@@ -150,9 +156,12 @@
      ontouchmove="touchMove(event, ${rowId})"
      ontouchend="touchEnd(event, ${rowId})">
 
-    <button class="swipe-delete" onclick="deleteCard(${rowId})">Удалить</button>
+    <button type="button" class="swipe-delete" onclick="deleteCard(${rowId})">Удалить</button>
 
-    <h5 class="mb-3">Товар #${rowId}</h5>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">Товар #${rowId}</h5>
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteCard(${rowId})">Удалить</button>
+    </div>
 
     <label class="form-label">Штрихкод</label>
     <input class="form-control mb-2 barcode" data-id="${rowId}" placeholder="Сканируйте или введите">
@@ -165,7 +174,7 @@
     <div class="row">
         <div class="col-4">
             <label class="form-label">Кол-во</label>
-            <input type="number" class="form-control mb-2 qty" min="0" step="0.001">
+            <input type="number" class="form-control mb-2 qty" min="0" step="1">
         </div>
         <div class="col-4">
             <label class="form-label">Цена</label>
@@ -182,6 +191,11 @@
     <label class="form-label mt-2">Годен до</label>
     <input type="date" class="form-control mb-2 expiry_date">
 
+    <div class="form-check my-2">
+        <input type="checkbox" class="form-check-input is_used" id="used_${rowId}">
+        <label class="form-check-label" for="used_${rowId}">Товар б/у</label>
+    </div>
+
     <label class="form-label">Партия</label>
     <input type="text" class="form-control batch">
 
@@ -189,6 +203,11 @@
 
             $("#itemsCardWrapper").append(html);
             initSelect2(rowId);
+            if (productData) {
+                fillProduct(rowId, productData);
+            }
+
+            return rowId;
         }
 
         // === Select2 (поиск + выбор товара) ===
@@ -213,14 +232,83 @@
                 const card = $(`#card_${id}`);
                 card.find(".barcode").val(data.barcode);
 
-                // Автоподстановка последней закупочной цены
-                $.get(`/api/products/${data.id}/last-price`, function (res) {
-                    if (res.success && res.price) {
-                        card.find(".price").val(res.price);
-                        recalcRow(id);
-                    }
-                });
+                loadLastPrice(id, data.id);
             });
+        }
+
+        function loadLastPrice(id, productId) {
+            const card = $(`#card_${id}`);
+
+            $.get(`/api/products/${productId}/last-price`, function (res) {
+                if (res.success && res.price !== null && res.price !== undefined) {
+                    card.find(".price").val(parseFloat(res.price).toFixed(2));
+                    recalcRow(id);
+                }
+            });
+        }
+
+        function fillProduct(id, item) {
+            const card = $(`#card_${id}`);
+            const select = card.find(".product_select");
+            const text = item.text || `${item.name} (${item.barcode || ""})`;
+
+            card.find(".barcode").val(item.barcode || "");
+            select.append(new Option(text, item.id, true, true)).trigger("change");
+            loadLastPrice(id, item.id);
+
+            if (!card.find(".qty").val()) {
+                card.find(".qty").val(1);
+            }
+
+            recalcRow(id);
+        }
+
+        function receiveBarcode(barcode, targetRowId = null) {
+            barcode = (barcode || "").trim();
+            if (!barcode) return;
+
+            const existingInput = $("#itemsCardWrapper .barcode").filter(function () {
+                return $(this).val().trim() === barcode;
+            }).first();
+
+            if (existingInput.length) {
+                const card = existingInput.closest(".item-card");
+                const id = card.attr("id").split("_")[1];
+
+                if (!targetRowId || String(id) !== String(targetRowId)) {
+                    const qtyInput = card.find(".qty");
+                    const qty = parseInt((qtyInput.val() || "0").replace(',', '.'), 10) || 0;
+                    qtyInput.val(qty + 1);
+                    recalcRow(id);
+
+                    const targetCard = targetRowId ? $(`#card_${targetRowId}`) : $();
+                    if (targetCard.length && !targetCard.find(".product_select").val()) {
+                        deleteCard(targetRowId);
+                    }
+
+                    return;
+                }
+            }
+
+            $.get("/api/products/barcode/" + encodeURIComponent(barcode), function (res) {
+                if (res.success && res.product) {
+                    const item = {
+                        id: res.product.id,
+                        text: res.product.name + " (" + (res.product.barcode || "") + ")",
+                        name: res.product.name,
+                        barcode: res.product.barcode,
+                    };
+                    const id = targetRowId || addRow();
+                    fillProduct(id, item);
+                } else {
+                    alert("Товар не найден!");
+                }
+            });
+        }
+
+        function scanIntoNewRow() {
+            activeScanRowId = null;
+            startScan(null);
         }
 
         // === Поиск товара по штрихкоду ===
@@ -228,21 +316,21 @@
             let id = $(this).data("id");
             let barcode = $(this).val();
 
-            $.get("/api/products/search", { query: barcode }, function (data) {
-                if (data.results.length) {
-                    let item = data.results[0];
-                    let select = $(`#card_${id} .product_select`);
-                    select.append(new Option(item.text, item.id, true, true)).trigger("change");
-                } else {
-                    alert("Товар не найден!");
-                }
-            });
+            receiveBarcode(barcode, id);
+        });
+
+        $("#quickBarcode").on("change keydown", function(e) {
+            if (e.type === "keydown" && e.key !== "Enter") return;
+            e.preventDefault();
+
+            receiveBarcode($(this).val());
+            $(this).val("").focus();
         });
 
         // === Пересчёт суммы строки и документа ===
         function recalcRow(id) {
             let card = $(`#card_${id}`);
-            let qty   = parseFloat((card.find(".qty").val()   || "0").replace(',', '.')) || 0;
+            let qty   = parseInt((card.find(".qty").val()   || "0").replace(',', '.'), 10) || 0;
             let price = parseFloat((card.find(".price").val() || "0").replace(',', '.')) || 0;
             let sum   = qty * price;
             card.find(".row_sum").text(sum.toFixed(2));
@@ -288,8 +376,13 @@
             codeReader.decodeFromVideoDevice(null, 'videoPreview', (result, err) => {
                 if (result) {
                     const code = result.getText();
-                    const input = $(`#card_${activeScanRowId} .barcode`);
-                    input.val(code).trigger("change");
+                    if (activeScanRowId) {
+                        const input = $(`#card_${activeScanRowId} .barcode`);
+                        input.val(code).trigger("change");
+                    } else {
+                        receiveBarcode(code);
+                        $("#quickBarcode").val("").focus();
+                    }
                     stopScan();
                 }
             });
@@ -318,6 +411,7 @@
                     barcode: row.find(".barcode").val(),
                     quantity: row.find(".qty").val(),
                     unit_price: row.find(".price").val(),
+                    is_used: row.find(".is_used").is(":checked") ? 1 : 0,
                     expiry_date: row.find(".expiry_date").val(),
                     batch: row.find(".batch").val(),
                 });

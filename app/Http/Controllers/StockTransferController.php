@@ -8,8 +8,11 @@ use App\Models\StockMovement;
 use App\Models\Warehouse;
 use App\Models\Store;
 use App\Models\Product;
+use App\Models\TransferDiscrepancy;
+use App\Support\Audit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class StockTransferController extends Controller
 {
@@ -61,6 +64,9 @@ class StockTransferController extends Controller
             'from_id'   => 'required|integer',
             'to_id'     => 'required|integer',
             'items'     => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.unit_price' => 'nullable|numeric|min:0',
         ]);
 
 // Дополнительная кастомная проверка
@@ -83,7 +89,7 @@ class StockTransferController extends Controller
             }
 
             $productId = $item['product_id'];
-            $qty       = (float)$item['quantity'];
+            $qty       = (int)$item['quantity'];
 
             $stockQuery = StockMovement::where('product_id', $productId);
 
@@ -118,12 +124,14 @@ class StockTransferController extends Controller
                 'user_id'           => auth()->id(),
                 'document_number'   => 'TR-' . time(),
                 'document_date'     => now(),
+                'status'            => 'shipped',
                 'comment'           => $request->comment,
             ]);
+            Audit::log('transfer_shipped', $transfer, 'Создан груз ' . $transfer->document_number);
 
             foreach ($items as $item) {
 
-                $qty   = (float)$item['quantity'];
+                $qty   = (int)$item['quantity'];
                 $price = isset($item['unit_price']) && $item['unit_price'] !== ''
                     ? (float)$item['unit_price']
                     : null;
@@ -136,6 +144,17 @@ class StockTransferController extends Controller
                     'expiry_date'       => $item['expiry_date'] ?? null,
                     'batch'             => $item['batch'] ?? null,
                 ]);
+
+                if ($price !== null) {
+                    \App\Models\PriceHistory::create([
+                        'product_id' => $item['product_id'],
+                        'user_id' => auth()->id(),
+                        'price_type' => 'transfer',
+                        'new_price' => $price,
+                        'source_type' => StockTransfer::class,
+                        'source_id' => $transfer->id,
+                    ]);
+                }
 
                 // OUT (списание)
                 StockMovement::create([
@@ -151,20 +170,119 @@ class StockTransferController extends Controller
                     'batch'         => $item['batch'] ?? null,
                 ]);
 
-                // IN (приход)
+                // Приход в точку назначения создается отдельно при приемке груза.
+            }
+        });
+
+        return response()->json(['success' => true]);
+    }
+
+    public function receive($id)
+    {
+        $transfer = StockTransfer::with([
+            'fromWarehouse',
+            'fromStore',
+            'toWarehouse',
+            'toStore',
+            'items.product',
+        ])->findOrFail($id);
+
+        return view('transfers.receive', compact('transfer'));
+    }
+
+    public function accept(Request $request, $id)
+    {
+        $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.quantity' => 'required|integer|min:1',
+        ]);
+
+        $transfer = StockTransfer::with(['items.product', 'discrepancies'])->findOrFail($id);
+
+        if ($transfer->status === 'received') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Груз уже принят.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($request, $transfer) {
+            $itemsByProduct = $transfer->items->keyBy('product_id');
+            $acceptedProductIds = [];
+
+            foreach ($request->items as $row) {
+                $item = $itemsByProduct->get((int)$row['product_id']);
+                $acceptedProductIds[] = (int)$row['product_id'];
+                if (!$item) {
+                    throw ValidationException::withMessages([
+                        'items' => 'Товар не входит в этот груз.',
+                    ]);
+                }
+
+                $qty = (int)$row['quantity'];
+                $remaining = (int)$item->quantity - (int)$item->received_quantity;
+
+                if ($qty > $remaining) {
+                    throw ValidationException::withMessages([
+                        'items' => "Принято больше, чем отгружено по товару {$item->product->name}.",
+                    ]);
+                }
+
+                $item->received_quantity = (int)$item->received_quantity + $qty;
+                $item->save();
+
                 StockMovement::create([
-                    'product_id'    => $item['product_id'],
+                    'product_id'    => $item->product_id,
                     'warehouse_id'  => $transfer->to_warehouse_id,
                     'store_id'      => $transfer->to_store_id,
-                    'document_type' => 'transfer',
+                    'document_type' => 'transfer_receive',
                     'document_id'   => $transfer->id,
                     'direction'     => 'in',
                     'quantity'      => $qty,
-                    'unit_price'    => $price,
-                    'expiry_date'   => $item['expiry_date'] ?? null,
-                    'batch'         => $item['batch'] ?? null,
+                    'unit_price'    => $item->unit_price,
+                    'expiry_date'   => $item->expiry_date,
+                    'batch'         => $item->batch,
                 ]);
             }
+
+            $transfer->refresh()->load('items');
+            foreach ($transfer->items as $item) {
+                $shortage = max(0, (int)$item->quantity - (int)$item->received_quantity);
+                $surplus = max(0, (int)$item->received_quantity - (int)$item->quantity);
+
+                if ($shortage > 0 || $surplus > 0) {
+                    TransferDiscrepancy::updateOrCreate(
+                        [
+                            'stock_transfer_id' => $transfer->id,
+                            'product_id' => $item->product_id,
+                        ],
+                        [
+                            'shipped_quantity' => (int)$item->quantity,
+                            'received_quantity' => (int)$item->received_quantity,
+                            'shortage_quantity' => $shortage,
+                            'surplus_quantity' => $surplus,
+                            'user_id' => auth()->id(),
+                        ]
+                    );
+                } else {
+                    TransferDiscrepancy::where('stock_transfer_id', $transfer->id)
+                        ->where('product_id', $item->product_id)
+                        ->delete();
+                }
+            }
+
+            $allReceived = $transfer->items->every(function ($item) {
+                return (int)$item->received_quantity >= (int)$item->quantity;
+            });
+
+            $transfer->update([
+                'status' => $allReceived ? 'received' : 'partially_received',
+                'received_at' => $allReceived ? now() : null,
+                'received_user_id' => auth()->id(),
+            ]);
+
+            Audit::log('transfer_received', $transfer, 'Принят груз ' . $transfer->document_number);
         });
 
         return response()->json(['success' => true]);
@@ -225,7 +343,8 @@ class StockTransferController extends Controller
             'toWarehouse',
             'toStore',
             'user',
-            'items.product'
+            'items.product',
+            'discrepancies.product',
         ])->findOrFail($id);
 
         return view('transfers.show', compact('transfer'));

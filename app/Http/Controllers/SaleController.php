@@ -8,6 +8,8 @@ use App\Models\Payment;
 use App\Models\Product;
 use App\Models\Store;
 use App\Models\StockMovement;
+use App\Models\PriceHistory;
+use App\Support\Audit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -108,9 +110,10 @@ class SaleController extends Controller
             'store_id'             => 'required|integer|exists:stores,id',
             'items'                => 'required|array|min:1',
             'items.*.product_id'   => 'required|integer|exists:products,id',
-            'items.*.quantity'     => 'required|numeric|min:0.001',
+            'items.*.quantity'     => 'required|integer|min:1',
             'items.*.unit_price'   => 'required|numeric|min:0',
             'payment_type'         => 'required|in:cash,card',
+            'discount_percent'     => 'nullable|integer|in:0,10,20,30,40,50,60,70',
             'customer_name'        => 'nullable|string',
             'customer_phone'       => 'nullable|string',
             'comment'              => 'nullable|string',
@@ -137,11 +140,14 @@ class SaleController extends Controller
             }
 
             $docNumber = 'SL-' . time();
+            $discountPercent = (int)$request->input('discount_percent', 0);
+            $discountMultiplier = (100 - $discountPercent) / 100;
 
             $total = 0;
             foreach ($items as $item) {
-                $total += $item['quantity'] * $item['unit_price'];
+                $total += $item['quantity'] * $item['unit_price'] * $discountMultiplier;
             }
+            $total = round($total, 2);
 
             $sale = Sale::create([
                 'store_id'       => $storeId,
@@ -149,6 +155,7 @@ class SaleController extends Controller
                 'document_number'=> $docNumber,
                 'document_date'  => now(),
                 'total_amount'   => $total,
+                'discount_percent' => $discountPercent,
                 'customer_name'  => $request->customer_name,
                 'customer_phone' => $request->customer_phone,
                 'comment'        => $request->comment,
@@ -156,14 +163,15 @@ class SaleController extends Controller
 
             foreach ($items as $item) {
                 $product   = Product::find($item['product_id']);
-                $lineTotal = $item['quantity'] * $item['unit_price'];
+                $discountedPrice = round($item['unit_price'] * $discountMultiplier, 2);
+                $lineTotal = round($item['quantity'] * $discountedPrice, 2);
 
                 SaleItem::create([
                     'sale_id'    => $sale->id,
                     'product_id' => $product->id,
                     'barcode'    => $product->barcode,
                     'quantity'   => $item['quantity'],
-                    'unit_price' => $item['unit_price'],
+                    'unit_price' => $discountedPrice,
                     'line_total' => $lineTotal,
                 ]);
 
@@ -176,9 +184,19 @@ class SaleController extends Controller
                     'document_id'   => $sale->id,
                     'direction'     => 'out',
                     'quantity'      => $item['quantity'],
-                    'unit_price'    => $item['unit_price'],
+                    'unit_price'    => $discountedPrice,
                     'expiry_date'   => null,
                     'batch'         => null,
+                ]);
+
+                PriceHistory::create([
+                    'product_id' => $product->id,
+                    'user_id' => auth()->id(),
+                    'price_type' => 'sale',
+                    'new_price' => $discountedPrice,
+                    'source_type' => Sale::class,
+                    'source_id' => $sale->id,
+                    'discount_percent' => $discountPercent,
                 ]);
             }
 
@@ -192,18 +210,21 @@ class SaleController extends Controller
 
             // здесь дальше можно позвать KkmServer через Http::post(...)
             // и обновить $payment->kkm_status / kkm_ticket
-
-
+            Audit::log('sale_created', $sale, 'Продажа ' . $sale->document_number, [
+                'discount_percent' => $discountPercent,
+                'payment_type' => $request->payment_type,
+            ]);
 
             return response()->json([
                 'success' => true,
                 'document_number' => $sale->document_number,
                 'total' => (float)$sale->total_amount,
+                'discount_percent' => $discountPercent,
                 'cashier' => auth()->user()->name,
                 'cashier_inn' => auth()->user()->inn ?? null,
                 'items' => $sale->items()->with('product')->get()->map(fn($i) => [
                     'name' => $i->product->name,
-                    'quantity' => (float)$i->quantity,
+                    'quantity' => (int)$i->quantity,
                     'unit_price' => (float)$i->unit_price,
                     'total' => (float)$i->quantity * (float)$i->unit_price,
                     'barcode' => $i->product->barcode,
@@ -292,6 +313,7 @@ class SaleController extends Controller
 
             // помечаем оригинальную продажу как возвращённую
             $sale->update(['is_refunded' => 1]);
+            Audit::log('sale_refunded', $sale, 'Возврат продажи ' . $sale->document_number);
 
             return response()->json([
                 'success' => true,

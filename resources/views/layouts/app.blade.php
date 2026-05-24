@@ -206,6 +206,7 @@
                         <li><a class="dropdown-item" href="/stock/transfers/create">📤 Перемещение</a></li>
                         <li><a class="dropdown-item" href="/transfers/journal">📚 Журнал перемещений</a></li>
                         <li><a class="dropdown-item" href="/stock">📦 Остатки</a></li>
+                        <li><a class="dropdown-item" href="{{ route('reports.in_transit') }}">🚚 Товар в пути</a></li>
                         <li><a class="dropdown-item" href="/product-search">     Поиск товара</a></li>
                     </ul>
                 </li>
@@ -259,6 +260,14 @@
                         <li><a class="dropdown-item" href="/stock/movements">📄 Движение товара</a></li>
                         <li><a class="dropdown-item" href="/reports/stock">📊 Остатки</a></li>
                         <li><a class="dropdown-item" href="/reports/sales">💰 Продажи</a></li>
+                        <li><a class="dropdown-item" href="{{ route('prices.history') }}">История цен</a></li>
+                        <li><a class="dropdown-item" href="{{ route('audit.index') }}">Журнал действий</a></li>
+                        <li>
+                            <form action="{{ route('backup.database') }}" method="POST" class="px-3 py-1">
+                                @csrf
+                                <button class="btn btn-sm btn-outline-secondary w-100">Резервная копия БД</button>
+                            </form>
+                        </li>
                         <li  >
                             <a class="dropdown-item" href="{{ route('analytics.index') }}">
                                 📊 Аналитика

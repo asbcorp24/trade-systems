@@ -7,7 +7,7 @@ class Sale extends Model
 {
     protected $fillable = [
         'store_id', 'user_id', 'document_number', 'document_date',
-        'total_amount', 'customer_name', 'customer_phone',
+        'total_amount', 'discount_percent', 'customer_name', 'customer_phone',
         'comment', 'is_refund', 'is_refunded'
     ];
 

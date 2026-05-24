@@ -10,18 +10,44 @@ use App\Models\ProductImage;
 use App\Models\Attribute;
 use Illuminate\Support\Facades\Storage;
 use App\Models\GoodsReceiptItem;
+use App\Models\PriceHistory;
+use App\Support\Audit;
 
 class ProductController extends Controller
 {
+    public function generateBarcode()
+    {
+        do {
+            $base = '20' . str_pad((string)random_int(0, 9999999999), 10, '0', STR_PAD_LEFT);
+            $barcode = $base . $this->ean13Checksum($base);
+        } while (Product::where('barcode', $barcode)->exists());
+
+        return response()->json([
+            'success' => true,
+            'barcode' => $barcode,
+        ]);
+    }
+
+    private function ean13Checksum(string $base): int
+    {
+        $sum = 0;
+        for ($i = 0; $i < 12; $i++) {
+            $sum += (int)$base[$i] * ($i % 2 === 0 ? 1 : 3);
+        }
+
+        return (10 - ($sum % 10)) % 10;
+    }
+
     public function lastPurchasePrice($id)
     {
+        $product = Product::findOrFail($id);
         $item = GoodsReceiptItem::where('product_id', $id)
             ->orderByDesc('created_at')
             ->first();
 
         return response()->json([
             'success' => true,
-            'price'   => $item?->unit_price,
+            'price'   => $item?->unit_price ?? $product->base_price,
         ]);
     }
 
@@ -163,6 +189,17 @@ class ProductController extends Controller
         }
 
         $product = Product::create($data);
+        Audit::log('product_created', $product, 'Создан товар ' . $product->name);
+        if (!empty($data['base_price'])) {
+            PriceHistory::create([
+                'product_id' => $product->id,
+                'user_id' => auth()->id(),
+                'price_type' => 'base',
+                'new_price' => $data['base_price'],
+                'source_type' => Product::class,
+                'source_id' => $product->id,
+            ]);
+        }
 
         return response()->json([
             'success' => true,
@@ -209,7 +246,20 @@ class ProductController extends Controller
             $data['photo_path'] = $path;
         }
 
+        $oldPrice = $product->base_price;
         $product->update($data);
+        Audit::log('product_updated', $product, 'Изменен товар ' . $product->name);
+        if (array_key_exists('base_price', $data) && (string)$oldPrice !== (string)$product->base_price) {
+            PriceHistory::create([
+                'product_id' => $product->id,
+                'user_id' => auth()->id(),
+                'price_type' => 'base',
+                'old_price' => $oldPrice,
+                'new_price' => $product->base_price,
+                'source_type' => Product::class,
+                'source_id' => $product->id,
+            ]);
+        }
 
         return response()->json([
             'success' => true,

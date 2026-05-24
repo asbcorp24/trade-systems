@@ -29,7 +29,7 @@
                     <td>{{ $i->line_total }}</td>
                     <td>
                         <input type="number" class="form-control refund_qty"
-                               data-id="{{ $i->id }}" max="{{ $i->quantity }}" step="0.001">
+                               data-id="{{ $i->id }}" max="{{ (int)$i->quantity }}" step="1">
                     </td>
                 </tr>
             @endforeach

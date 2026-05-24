@@ -12,9 +12,12 @@ class StockTransfer extends Model
         'from_store_id',
         'to_store_id',
         'user_id',
+        'received_user_id',
         'document_number',
         'document_date',
+        'received_at',
         'comment',
+        'status',
     ];
     protected $casts = [
         'document_date' => 'datetime',
@@ -22,6 +25,10 @@ class StockTransfer extends Model
     public function items()
     {
         return $this->hasMany(StockTransferItem::class);
+    }
+    public function discrepancies()
+    {
+        return $this->hasMany(TransferDiscrepancy::class);
     }
     public function user()
     {

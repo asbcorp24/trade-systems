@@ -12,6 +12,10 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\ProductSearchController;
+use App\Http\Controllers\AuditLogController;
+use App\Http\Controllers\PriceHistoryController;
+use App\Http\Controllers\InTransitReportController;
+use App\Http\Controllers\BackupController;
 
 use App\Http\Controllers\AttributeController;
 use App\Http\Controllers\CategoryController;
@@ -128,6 +132,8 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/products/create', [ProductController::class, 'create'])->name('products.create');
     Route::post('/api/products/store', [ProductController::class, 'store'])->name('products.store.ajax');
+    Route::get('/api/products/generate-barcode', [ProductController::class, 'generateBarcode'])
+        ->name('products.generate_barcode');
 
     Route::get('/products', [ProductController::class, 'index'])->name('products.index');
     Route::get('/api/products', [ProductController::class, 'listAjax'])->name('products.list.ajax');
@@ -192,6 +198,10 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('/transfers/journal', [\App\Http\Controllers\StockTransferController::class, 'journal'])
         ->name('transfers.journal');
+    Route::get('/transfers/{id}/receive', [StockTransferController::class, 'receive'])
+        ->name('transfers.receive');
+    Route::post('/transfers/{id}/receive', [StockTransferController::class, 'accept'])
+        ->name('transfers.accept');
     Route::get('/transfers/{id}', [\App\Http\Controllers\StockTransferController::class, 'show'])
         ->name('transfers.show');
     Route::get('/transfers/{id}/print', [StockTransferController::class, 'print'])
@@ -224,6 +234,10 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/analytics', [AnalyticsController::class, 'index'])
         ->name('analytics.index')
         ->middleware('auth');
+    Route::get('/audit', [AuditLogController::class, 'index'])->name('audit.index');
+    Route::get('/prices/history', [PriceHistoryController::class, 'index'])->name('prices.history');
+    Route::get('/reports/in-transit', [InTransitReportController::class, 'index'])->name('reports.in_transit');
+    Route::post('/backup/database', [BackupController::class, 'database'])->name('backup.database');
 
 
     // Журнал продаж
@@ -271,4 +285,3 @@ Route::middleware(['auth'])->group(function () {
 
 
 });
-

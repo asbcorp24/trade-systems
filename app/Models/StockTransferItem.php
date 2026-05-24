@@ -10,9 +10,17 @@ class StockTransferItem extends Model
         'stock_transfer_id',
         'product_id',
         'quantity',
+        'received_quantity',
         'unit_price',
         'expiry_date',
         'batch',
+    ];
+
+    protected $casts = [
+        'quantity' => 'integer',
+        'received_quantity' => 'integer',
+        'unit_price' => 'decimal:2',
+        'expiry_date' => 'date',
     ];
 
     public function transfer()

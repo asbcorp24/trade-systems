@@ -39,6 +39,12 @@
 
         <h4 class="mb-3">Товары</h4>
 
+        <div class="input-group mb-3">
+            <input id="quickTransferBarcode" class="form-control form-control-lg"
+                   placeholder="Сканируйте штрихкод товара">
+            <button class="btn btn-primary" type="button" onclick="BarcodeScanner.open('#quickTransferBarcode')">Сканировать камерой</button>
+        </div>
+
         <div id="itemsCardWrapper"></div>
 
         <button class="btn btn-primary w-100 mb-3" onclick="addRow()">➕ Добавить товар</button>
@@ -129,33 +135,7 @@
             let rid = $(this).data('id');
             let barcode = $(this).val().trim();
 
-            if (!barcode) return;
-
-            $.ajax({
-                url: "/api/products/by-barcode",
-                data: {
-                    barcode: barcode,
-                    location_type: $('#from_type').val(),
-                    location_id: $('#from_id').val(),
-                },
-                success: function(res) {
-                    if (!res.results || !res.results.length) {
-                        alert("Товар с таким штрих-кодом не найден");
-                        return;
-                    }
-
-                    let d = res.results[0];
-
-                    let select = $(`#row_${rid} .product_select`);
-
-                    let option = new Option(d.text, d.id, true, true);
-                    select.append(option).trigger('change');      // визуальная подстановка
-                    select.trigger({
-                        type: 'select2:select',
-                        params: { data: d }                       // ДАННЫЕ для твоей логики
-                    });
-                }
-            });
+            receiveTransferBarcode(barcode, rid);
         });
 
 
@@ -189,7 +169,7 @@
         fillLocationSelect('warehouse', '#to_id');
 
         // === Добавление карточки товара ===
-        function addRow() {
+        function addRow(productData = null) {
             rowId++;
 
             let card = `
@@ -213,7 +193,7 @@
     <div class="row">
         <div class="col-6">
             <label class="form-label small">Кол-во</label>
-            <input type="number" class="form-control qty" min="0" step="0.001" data-id="${rowId}">
+            <input type="number" class="form-control qty" min="0" step="1" data-id="${rowId}">
         </div>
         <div class="col-6">
             <label class="form-label small">Цена</label>
@@ -235,6 +215,11 @@
 `;
             $("#itemsCardWrapper").append(card);
             initSelect2(rowId);
+            if (productData) {
+                fillTransferProduct(rowId, productData);
+            }
+
+            return rowId;
         }
 
         // === Select2 по остаткам ===
@@ -262,19 +247,96 @@
                 const rid  = $(this).data('id');
 
                 // Остаток и лимит
-                const max = data.qty_left || 0;
+                const max = parseInt(data.qty_left || 0, 10);
                 $(`#stock_info_${rid}`).text(`Остаток: ${max} ${data.unit || ''}`);
                 $(`#row_${rid} .qty`).data('max', max);
 
                 // Автоподстановка цены
-                if (data.last_price) {
-                    $(`#row_${rid} .price`).val(data.last_price.toFixed(2));
+                if (data.last_price !== null && data.last_price !== undefined) {
+                    $(`#row_${rid} .price`).val(parseFloat(data.last_price).toFixed(2));
                 }
 
                 recalcLineTotal(rid);
                 recalcDocTotal();
             });
         }
+
+        function fillTransferProduct(rid, data) {
+            const row = $(`#row_${rid}`);
+            const select = row.find('.product_select');
+            const option = new Option(data.text, data.id, true, true);
+
+            row.find('.barcode_input').val(data.barcode || '');
+            select.append(option).trigger('change');
+            select.trigger({
+                type: 'select2:select',
+                params: { data: data }
+            });
+
+            if (!row.find('.qty').val()) {
+                row.find('.qty').val(1);
+            }
+
+            recalcLineTotal(rid);
+            recalcDocTotal();
+        }
+
+        function receiveTransferBarcode(barcode, targetRowId = null) {
+            barcode = (barcode || '').trim();
+            if (!barcode) return;
+
+            const existingInput = $("#itemsCardWrapper .barcode_input").filter(function () {
+                return $(this).val().trim() === barcode;
+            }).first();
+
+            if (existingInput.length) {
+                const row = existingInput.closest('.item-card');
+                const rid = row.attr('id').split('_')[1];
+
+                if (!targetRowId || String(rid) !== String(targetRowId)) {
+                    const qtyInput = row.find('.qty');
+                    const qty = parseInt(qtyInput.val() || 0, 10) || 0;
+                    qtyInput.val(qty + 1);
+                    limitQty(rid);
+                    recalcLineTotal(rid);
+                    recalcDocTotal();
+
+                    const targetRow = targetRowId ? $(`#row_${targetRowId}`) : $();
+                    if (targetRow.length && !targetRow.find('.product_select').val()) {
+                        targetRow.remove();
+                        recalcDocTotal();
+                    }
+
+                    return;
+                }
+            }
+
+            $.ajax({
+                url: "/api/products/by-barcode",
+                data: {
+                    barcode: barcode,
+                    location_type: $('#from_type').val(),
+                    location_id: $('#from_id').val(),
+                },
+                success: function(res) {
+                    if (!res.results || !res.results.length) {
+                        alert("Товар с таким штрих-кодом не найден");
+                        return;
+                    }
+
+                    const id = targetRowId || addRow();
+                    fillTransferProduct(id, res.results[0]);
+                }
+            });
+        }
+
+        $("#quickTransferBarcode").on("change keydown", function(e) {
+            if (e.type === "keydown" && e.key !== "Enter") return;
+            e.preventDefault();
+
+            receiveTransferBarcode($(this).val());
+            $(this).val("").focus();
+        });
 
         // Проверка количества и пересчёт сумм
         $(document).on('input', '.qty, .price', function () {
@@ -286,17 +348,21 @@
 
         function limitQty(rid) {
             const qtyInput = $(`#row_${rid} .qty`);
-            const max = parseFloat(qtyInput.data('max') || 0);
-            let val   = parseFloat(qtyInput.val() || 0);
+            const max = parseInt(qtyInput.data('max') || 0, 10);
+            let val   = parseInt(qtyInput.val() || 0, 10);
 
             if (max > 0 && val > max) {
                 alert(`Нельзя списать больше, чем остаток (${max})`);
                 qtyInput.val(max);
             }
+
+            if (val < 0) {
+                qtyInput.val(0);
+            }
         }
 
         function recalcLineTotal(rid) {
-            const qty   = parseFloat($(`#row_${rid} .qty`).val() || 0);
+            const qty   = parseInt($(`#row_${rid} .qty`).val() || 0, 10) || 0;
             const price = parseFloat($(`#row_${rid} .price`).val() || 0);
             const sum   = qty * price;
             $(`#line_total_${rid}`).text(sum.toFixed(2));
@@ -318,7 +384,8 @@
 
             $("#itemsCardWrapper .item-card").each(function(){
                 const rid = $(this).attr('id').split('_')[1];
-                const pid = $(this).find('.product_select').val();
+                const pid = $(this).find('.product_select').val()
+                    || $(this).find('input[name$="[product_id]"]').val();
                 if (!pid) return;
 
                 items.push({

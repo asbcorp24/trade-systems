@@ -46,6 +46,7 @@
                     <th>Кол-во</th>
                     <th>Цена</th>
                     <th>Сумма</th>
+                    <th>Состояние</th>
                     <th>Партия</th>
                     <th>Годен до</th>
                 </tr>
@@ -58,6 +59,7 @@
                         <td>{{ $item->quantity }}</td>
                         <td>{{ number_format($item->unit_price, 2, ',', ' ') }} ₽</td>
                         <td>{{ number_format($item->unit_price * $item->quantity, 2, ',', ' ') }} ₽</td>
+                        <td>{{ $item->is_used ? 'б/у' : 'Новый' }}</td>
                         <td>{{ $item->batch }}</td>
                         <td>{{ $item->expiry_date }}</td>
                     </tr>

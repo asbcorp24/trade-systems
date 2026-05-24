@@ -16,6 +16,14 @@ class InventoryItem extends Model
         'diff_value',
     ];
 
+    protected $casts = [
+        'expected_qty' => 'integer',
+        'actual_qty' => 'integer',
+        'diff_qty' => 'integer',
+        'unit_price' => 'decimal:2',
+        'diff_value' => 'decimal:2',
+    ];
+
     public function inventory()
     {
         return $this->belongsTo(Inventory::class);

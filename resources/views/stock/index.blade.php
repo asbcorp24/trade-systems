@@ -97,12 +97,12 @@
 
                         // вычисляем статус
                         let status = `<span class="badge bg-success">OK</span>`;
-                        let qty = parseFloat(p.qty);
+                        let qty = parseInt(p.qty || 0, 10);
 
-                        if (qty < parseFloat(p.min_stock)) {
+                        if (qty < parseInt(p.min_stock || 0, 10)) {
                             status = `<span class="badge bg-danger">Мало</span>`;
                         }
-                        if (p.max_stock > 0 && qty > parseFloat(p.max_stock)) {
+                        if (parseInt(p.max_stock || 0, 10) > 0 && qty > parseInt(p.max_stock || 0, 10)) {
                             status = `<span class="badge bg-warning text-dark">Много</span>`;
                         }
 
@@ -110,7 +110,7 @@
 <tr>
     <td>${p.barcode ?? '-'}</td>
     <td>${p.name}</td>
-    <td>${p.qty}</td>
+    <td>${parseInt(p.qty || 0, 10)}</td>
     <td>${p.unit}</td>
 
     <td>${status}</td>

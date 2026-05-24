@@ -104,9 +104,10 @@ class ProductSearchController extends Controller
                 [
                     'id'        => $product->id,
                     'text'      => $product->name,
-                    'qty_left'  => $qty ?? 0,
+                    'barcode'   => $product->barcode,
+                    'qty_left'  => (int)($qty ?? 0),
                     'unit'      => $product->unitRef->name ?? '',
-                    'last_price'=> $lastPrice ?? 0
+                    'last_price'=> $lastPrice ?? $product->base_price ?? 0
                 ]
             ]
         ]);

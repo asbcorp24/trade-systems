@@ -65,7 +65,7 @@ class InventoryController extends Controller
             $balances = DB::table('stock_movements')
                 ->select(
                     'product_id',
-                    DB::raw('SUM(quantity) as expected_qty'),
+                    DB::raw('SUM(CASE WHEN direction = "in" THEN quantity ELSE -quantity END) as expected_qty'),
                     DB::raw('MAX(unit_price) as unit_price') // условно берём последнюю цену
                 )
                 ->where('warehouse_id', $inventory->warehouse_id)
@@ -122,8 +122,8 @@ class InventoryController extends Controller
                 $item = $inventory->items->firstWhere('id', $itemId);
                 if (!$item) continue;
 
-                $actual = isset($row['actual_qty']) ? (float)$row['actual_qty'] : 0;
-                $diff   = $actual - (float)$item->expected_qty;
+                $actual = isset($row['actual_qty']) ? (int)$row['actual_qty'] : 0;
+                $diff   = $actual - (int)$item->expected_qty;
                 $diffVal = $item->unit_price ? $diff * (float)$item->unit_price : 0;
 
                 $item->actual_qty = $actual;
@@ -165,12 +165,12 @@ class InventoryController extends Controller
                 if (count($r) < 2) continue;
 
                 $productId = (int)trim($r[0]);
-                $actual    = (float)str_replace(',', '.', $r[1]);
+                $actual    = (int)str_replace(',', '.', $r[1]);
 
                 $item = $inventory->items->firstWhere('product_id', $productId);
                 if (!$item) continue;
 
-                $diff   = $actual - (float)$item->expected_qty;
+                $diff   = $actual - (int)$item->expected_qty;
                 $diffVal = $item->unit_price ? $diff * (float)$item->unit_price : 0;
 
                 $item->actual_qty = $actual;
@@ -208,12 +208,24 @@ class InventoryController extends Controller
 
         try {
             foreach ($inventory->items as $item) {
-                if ((float)$item->diff_qty == 0) {
+                if ((int)$item->diff_qty == 0) {
                     continue;
                 }
 
                 $direction = $item->diff_qty > 0 ? 'in' : 'out';
-                $qty       = abs((float)$item->diff_qty);
+                $qty       = abs((int)$item->diff_qty);
+
+                if ($direction === 'out') {
+                    $available = DB::table('stock_movements')
+                        ->where('product_id', $item->product_id)
+                        ->where('warehouse_id', $inventory->warehouse_id)
+                        ->selectRaw('COALESCE(SUM(CASE WHEN direction = "in" THEN quantity ELSE -quantity END), 0) AS qty')
+                        ->value('qty');
+
+                    if ($qty > $available) {
+                        throw new \RuntimeException('Недостаточно остатка для списания по товару ID ' . $item->product_id);
+                    }
+                }
 
                 DB::table('stock_movements')->insert([
                     'product_id'    => $item->product_id,

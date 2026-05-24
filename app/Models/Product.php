@@ -57,5 +57,9 @@ class Product extends Model
     {
         return $this->hasMany(ProductImage::class);
     }
+    public function priceHistories()
+    {
+        return $this->hasMany(PriceHistory::class);
+    }
 
 }

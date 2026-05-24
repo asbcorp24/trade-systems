@@ -78,8 +78,8 @@ class StockController extends Controller
 
             $results[] = [
                 'id'        => $row->product_id,
-                'text'      => "{$row->name} (ост. {$row->qty} {$row->unit})",
-                'qty_left'  => (float)$row->qty,
+                'text'      => "{$row->name} (ост. ".(int)$row->qty." {$row->unit})",
+                'qty_left'  => (int)$row->qty,
                 'barcode'   => $row->barcode,
                 'unit'      => $row->unit,
                 'last_price'=> $lastPrice ? (float)$lastPrice : null,

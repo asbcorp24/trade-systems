@@ -72,7 +72,9 @@
                     <th>Откуда</th>
                     <th>Куда</th>
                     <th>Создал</th>
+                    <th>Статус</th>
                     <th>Комментарий</th>
+                    <th></th>
                 </tr>
                 </thead>
                 <tbody>
@@ -99,7 +101,21 @@
                         </td>
 
                         <td>{{ $row->user->name ?? '—' }}</td>
+                        <td>
+                            @if($row->status === 'received')
+                                <span class="badge bg-success">Принят</span>
+                            @elseif($row->status === 'partially_received')
+                                <span class="badge bg-warning text-dark">Частично принят</span>
+                            @else
+                                <span class="badge bg-info text-dark">В пути</span>
+                            @endif
+                        </td>
                         <td>{{ $row->comment }}</td>
+                        <td>
+                            @if($row->status !== 'received')
+                                <a href="{{ route('transfers.receive', $row->id) }}" class="btn btn-sm btn-success">Принять</a>
+                            @endif
+                        </td>
                     </tr>
                 @endforeach
                 </tbody>

@@ -39,19 +39,34 @@
 
         <h4>Товары</h4>
 
+        <div class="input-group mb-3">
+            <input id="quickSaleBarcode" class="form-control form-control-lg" placeholder="Пикните штрихкод товара">
+            <button class="btn btn-outline-primary" type="button" onclick="BarcodeScanner.open('#quickSaleBarcode')">Камера</button>
+        </div>
+
         <div id="itemsWrapper"></div>
 
-        <button class="btn btn-secondary w-100 my-3" onclick="addRow()">➕ Добавить товар</button>
+        <button class="btn btn-secondary w-100 my-3" onclick="addRow()">➕ Добавить товар вручную</button>
 
         <div class="card mb-3">
             <div class="card-body">
 
                 <div class="row mb-2">
-                    <div class="col-md-4">
+                    <div class="col-md-5">
                         <label class="form-label">Тип оплаты</label>
-                        <select id="payment_type" class="form-select">
-                            <option value="cash">Наличные</option>
-                            <option value="card" selected>Безнал (эквайринг)</option>
+                        <input type="hidden" id="payment_type" value="card">
+                        <div class="btn-group w-100" role="group">
+                            <button type="button" class="btn btn-outline-success payment-btn" data-payment="cash">Наличные</button>
+                            <button type="button" class="btn btn-success payment-btn" data-payment="card">Безнал</button>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Скидка</label>
+                        <select id="discount_percent" class="form-select">
+                            <option value="0">Без скидки</option>
+                            @foreach([10,20,30,40,50,60,70] as $discount)
+                                <option value="{{ $discount }}">{{ $discount }}%</option>
+                            @endforeach
                         </select>
                     </div>
                     <div id="cash_calculator" class="card p-3 mb-3" style="display:none;margin-top: 20px">
@@ -60,7 +75,8 @@
 
                         <h5 class="mt-2">Сдача: <span id="cash_change">0.00</span> ₽</h5>
                     </div>
-                    <div class="col-md-8 text-end align-self-end">
+                    <div class="col-md-4 text-end align-self-end">
+                        <div class="text-muted">До скидки: <span id="subtotalAmount">0.00</span> ₽</div>
                         <div class="h4 mb-0">
                             Итого: <span id="totalAmount">0.00</span> ₽
                         </div>
@@ -92,7 +108,7 @@
         let addedProducts = [];
         let rowId = 0;
 
-        function addRow() {
+        function addRow(productData = null) {
             rowId++;
 
             let html = `
@@ -121,7 +137,7 @@
     <div class="row mb-2">
         <div class="col-4">
             <label class="form-label small">Кол-во</label>
-            <input type="number" class="form-control qty" min="0" step="0.001" value="1">
+            <input type="number" class="form-control qty" min="0" step="1" value="1">
         </div>
         <div class="col-4">
             <label class="form-label small">Цена</label>
@@ -136,6 +152,11 @@
 
             $('#itemsWrapper').append(html);
             initProductSelect(rowId);
+            if (productData) {
+                fillSaleProduct(rowId, productData);
+            }
+
+            return rowId;
         }
 
         function removeRow(id) {
@@ -181,7 +202,7 @@
                 // штрихкод
                 $(`#row_${id} .barcode`).val(p.barcode || '');
                 // макс. остаток
-                $(`#row_${id} .product_select`).data('max', p.qty);
+                $(`#row_${id} .product_select`).data('max', parseInt(p.qty || 0, 10));
                 // цена
                 $(`#row_${id} .price`).val(p.unit_price || 0);
 
@@ -190,11 +211,27 @@
             });
         }
 
-        // Поиск по штрихкоду
-        $(document).on('change', '.barcode', function () {
-            let rowId = $(this).data('id');
-            let barcode = $(this).val().trim();
+        function fillSaleProduct(id, item) {
+            const select = $(`#row_${id} .product_select`);
+            const option = new Option(item.text, item.id, true, true);
+            select.append(option).trigger('change');
+            select.trigger({
+                type: "select2:select",
+                params: { data: item }
+            });
 
+            $(`#row_${id} .qty`).data('max', parseInt(item.qty || 0, 10));
+
+            if (item.unit_price !== null && item.unit_price !== undefined) {
+                $(`#row_${id} .price`).val(parseFloat(item.unit_price).toFixed(2));
+            }
+
+            recalcLine(`#row_${id}`);
+            recalcTotal();
+        }
+
+        function receiveSaleBarcode(barcode, targetRowId = null) {
+            barcode = (barcode || '').trim();
             if (!barcode) return;
 
             $.get('/api/sales/products', {
@@ -211,48 +248,50 @@
 
                 // ==== проверка на дубликат ====
                 if (productAlreadyAdded(item.id)) {
-                    alert("❗ Этот товар уже добавлен.");
+                    const existingRow = $('#itemsWrapper .sale-item-card').filter(function () {
+                        return $(this).find('.product_select').val() === String(item.id);
+                    }).first();
+
+                    if (existingRow.length) {
+                        const qtyInput = existingRow.find('.qty');
+                        const qty = parseInt(qtyInput.val() || 0, 10) || 0;
+                        qtyInput.val(qty + 1);
+                        recalcLine('#' + existingRow.attr('id'));
+                        recalcTotal();
+                    }
+
+                    const targetRow = targetRowId ? $(`#row_${targetRowId}`) : $();
+                    if (targetRow.length && !targetRow.find('.product_select').val()) {
+                        targetRow.remove();
+                    }
                     return;
                 }
 
-              //  addedProducts.push(String(item.id));
-
-                let select = $(`#row_${rowId} .product_select`);
-
-                // ==== корректная вставка в Select2 ====
-                let option = new Option(item.text, item.id, true, true);
-                select.append(option).trigger('change');
-
-                // ==== триггер select2:select вручную, чтобы сработал весь твой код ====
-                select.trigger({
-                    type: "select2:select",
-                    params: { data: item }
-                });
-
-                // === Обновление остатка ===
-                $(`#stock_info_${rowId}`).text(`Остаток: ${item.qty}`);
-
-                // === лимит количества ===
-                $(`#row_${rowId} .qty`).data('max', parseFloat(item.qty));
-
-                // === цена ===
-                if (item.unit_price) {
-                    $(`#row_${rowId} .price`).val(parseFloat(item.unit_price).toFixed(2));
-                }
-
-                // === пересчёт суммы строки ===
-                recalcLineTotal(rowId);
-                recalcDocTotal();
+                const id = targetRowId || addRow();
+                fillSaleProduct(id, item);
             });
+        }
+
+        // Поиск по штрихкоду
+        $(document).on('change', '.barcode', function () {
+            receiveSaleBarcode($(this).val(), $(this).data('id'));
+        });
+
+        $('#quickSaleBarcode').on('change keydown', function(e) {
+            if (e.type === 'keydown' && e.key !== 'Enter') return;
+            e.preventDefault();
+
+            receiveSaleBarcode($(this).val());
+            $(this).val('').focus();
         });
 
 
         // Пересчёт строки
         function recalcLine(selector) {
             let card = $(selector);
-            let max = parseFloat(card.find('.product_select').data('max')) || 0;
+            let max = parseInt(card.find('.product_select').data('max') || 0, 10);
             let qtyEl = card.find('.qty');
-            let qty = parseFloat(qtyEl.val()) || 0;
+            let qty = parseInt(qtyEl.val() || 0, 10) || 0;
 
             if (max > 0 && qty > max) {
                 alert("❗ Нельзя продавать больше, чем есть в наличии: " + max);
@@ -267,11 +306,14 @@
 
         // Общий пересчёт
         function recalcTotal() {
-            let total = 0;
+            let subtotal = 0;
             $('#itemsWrapper .sale-item-card').each(function () {
                 let line = parseFloat($(this).find('.line_total').val()) || 0;
-                total += line;
+                subtotal += line;
             });
+            const discount = parseInt($('#discount_percent').val() || 0, 10) || 0;
+            const total = subtotal * (100 - discount) / 100;
+            $('#subtotalAmount').text(subtotal.toFixed(2));
             $('#totalAmount').text(total.toFixed(2));
         }
 
@@ -290,7 +332,7 @@
 // === НАЛИЧНЫЕ ===
             if (payType === "cash") {
 
-                let total = parseFloat($("#sum_total").text());
+                let total = parseFloat($("#totalAmount").text() || 0);
                 let given = parseFloat($("#cash_given").val() || 0);
 
                 if (given < total) {
@@ -303,7 +345,7 @@
             $('#itemsWrapper .sale-item-card').each(function () {
                 let card = $(this);
                 let pid = card.find('.product_select').val();
-                let qty = parseFloat(card.find('.qty').val()) || 0;
+                let qty = parseInt(card.find('.qty').val() || 0, 10) || 0;
                 let price = parseFloat(card.find('.price').val()) || 0;
 
                 if (!pid || qty <= 0) return;
@@ -328,6 +370,7 @@
                     store_id: $('#store_id').val(),
                     items: items,
                     payment_type: $('#payment_type').val(),
+                    discount_percent: $('#discount_percent').val(),
                     customer_name: $('#customer_name').val(),
                     customer_phone: $('#customer_phone').val(),
                     comment: $('#comment').val()
@@ -439,13 +482,22 @@
                 }
             });
         }
-        // Переключение режима оплаты
-        $(document).on('change', '#payment_type', function() {
-            if ($(this).val() === 'cash') {
+        $(document).on('click', '.payment-btn', function() {
+            const payment = $(this).data('payment');
+            $('#payment_type').val(payment);
+            $('.payment-btn').removeClass('btn-success').addClass('btn-outline-success');
+            $(this).removeClass('btn-outline-success').addClass('btn-success');
+
+            if (payment === 'cash') {
                 $("#cash_calculator").show();
             } else {
                 $("#cash_calculator").hide();
             }
+            $('#cash_given').trigger('input');
+        });
+
+        $(document).on('change', '#discount_percent', function() {
+            recalcTotal();
         });
 
         // Калькулятор сдачи

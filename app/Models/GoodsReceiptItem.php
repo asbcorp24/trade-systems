@@ -15,13 +15,15 @@ class GoodsReceiptItem extends Model
         'barcode',
         'quantity',
         'unit_price',
+        'is_used',
         'expiry_date',
         'batch',
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:3',
+        'quantity' => 'integer',
         'unit_price' => 'decimal:2',
+        'is_used' => 'boolean',
         'expiry_date' => 'date',
     ];
 
